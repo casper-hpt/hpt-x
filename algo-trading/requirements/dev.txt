@@ -1,0 +1,4 @@
+# Development tooling: pip install -e ".[dev]"
+ruff>=0.6
+pytest>=8.0
+nbstripout>=0.7

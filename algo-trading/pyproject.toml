@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "algo-trading"
+version = "0.1.0"
+description = "Notebooks and a small backtesting toolkit for demoing algorithmic trading techniques."
+readme = "INFO.md"
+requires-python = ">=3.10"
+dynamic = ["dependencies", "optional-dependencies"]
+
+# Dependencies live in requirements/*.txt; edit versions there, not here.
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements/base.txt", "requirements/notebooks.txt"] }
+optional-dependencies.dev = { file = ["requirements/dev.txt"] }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["algo_trading*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"

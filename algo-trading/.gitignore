@@ -1,0 +1,8 @@
+# Data is downloaded separately: python scripts/download_data.py
+*.csv
+*.csv.part
+
+.venv/
+.ipynb_checkpoints/
+*.egg-info/
+.data/
