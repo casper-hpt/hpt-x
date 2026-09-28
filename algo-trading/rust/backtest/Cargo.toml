@@ -1,0 +1,16 @@
+[package]
+name = "algo-backtest-rs"
+description = "Band-rebalanced long-only portfolio simulator for algo_trading.backtest"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "algo_backtest_rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3.workspace = true
+numpy.workspace = true
+rayon.workspace = true

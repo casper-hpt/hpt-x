@@ -1,0 +1,19 @@
+# Rust engines behind algo_trading's backtest and animate modules. Each crate is a
+# separate Python extension built with maturin; see rust/README.md.
+[workspace]
+members = ["backtest", "animate"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.83"
+
+[workspace.dependencies]
+pyo3 = { version = "0.29", features = ["abi3-py310"] }
+numpy = "0.29"
+rayon = "1.12"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

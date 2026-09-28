@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "algo-animate-rs"
+description = "Rust renderer for algo_trading.backtest.animate.equity_race"
+requires-python = ">=3.10"
+dependencies = ["numpy>=2.1"]
+dynamic = ["version"]
+
+[tool.maturin]
+module-name = "algo_animate_rs"
+features = ["pyo3/extension-module"]

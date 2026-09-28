@@ -20,11 +20,13 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from .backtest import base_weights, risk_inputs, simulate, stats_from_result
+from .backtest import base_weights, risk_inputs, simulate_many, stats_from_result
 from .config import FEE_BPS, PortfolioConfig
 from .data import Panel
 
 __all__ = ["rotation_null", "sigma_rotation_null", "null_summary"]
+
+BATCH = 64   # simulations per parallel batch; bounds memory on long hourly panels
 
 
 def _rotate(df: pd.DataFrame, rng: np.random.Generator, lo: int) -> pd.DataFrame:
@@ -59,11 +61,13 @@ def rotation_null(panel: Panel, signal: pd.DataFrame, cfg: PortfolioConfig,
     sig = signal.fillna(0.0)
 
     out = []
-    for _ in range(n_sims):
-        shuffled = _rotate(sig, rng, wu)
-        res = simulate(panel.close, w_all * shuffled, cfg, fee_bps=fee_bps, warmup=wu)
-        out.append(stats_from_result(res, "", wu, panel.bars_per_year,
-                                     exposure=float(shuffled.iloc[wu:].mean().mean())))
+    for lo in range(0, n_sims, BATCH):
+        rotated = [_rotate(sig, rng, wu) for _ in range(min(BATCH, n_sims - lo))]
+        results = simulate_many(panel.close, [w_all * r for r in rotated], cfg,
+                                fee_bps=fee_bps, warmup=wu)
+        out += [stats_from_result(res, "", wu, panel.bars_per_year,
+                                  exposure=float(r.iloc[wu:].mean().mean()))
+                for res, r in zip(results, rotated, strict=True)]
     return pd.DataFrame(out)
 
 
@@ -91,13 +95,15 @@ def sigma_rotation_null(panel: Panel, cfg: PortfolioConfig, n_sims: int = 200,
         w = w.replace([np.inf, -np.inf], 0.0).fillna(0.0)
         return w.div(w.sum(axis=1).replace(0, np.nan), axis=0).fillna(0.0)
 
+    def rotated_weights() -> pd.DataFrame:
+        w = normalize((1.0 / _rotate(sigma, rng, wu)).where(investable, 0.0))
+        return normalize(w.clip(upper=cfg.max_weight))
+
     out = []
-    for _ in range(n_sims):
-        shuffled = _rotate(sigma, rng, wu)
-        w = normalize((1.0 / shuffled).where(investable, 0.0))
-        w = normalize(w.clip(upper=cfg.max_weight))
-        res = simulate(panel.close, w, cfg, fee_bps=fee_bps, warmup=wu)
-        out.append(stats_from_result(res, "", wu, panel.bars_per_year, exposure=1.0))
+    for lo in range(0, n_sims, BATCH):
+        weights = [rotated_weights() for _ in range(min(BATCH, n_sims - lo))]
+        out += [stats_from_result(res, "", wu, panel.bars_per_year, exposure=1.0)
+                for res in simulate_many(panel.close, weights, cfg, fee_bps=fee_bps, warmup=wu)]
     return pd.DataFrame(out)
 
 

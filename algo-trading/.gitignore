@@ -6,3 +6,7 @@
 .ipynb_checkpoints/
 *.egg-info/
 .data/
+.media/
+
+# Rust build output
+rust/target/

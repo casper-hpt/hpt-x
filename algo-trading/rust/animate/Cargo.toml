@@ -1,0 +1,19 @@
+[package]
+name = "algo-animate-rs"
+description = "Parallel equity-race video renderer for algo_trading.backtest.animate"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "algo_animate_rs"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3.workspace = true
+numpy.workspace = true
+rayon.workspace = true
+tiny-skia = "0.12"
+ab_glyph = "0.2"
+resvg = { version = "0.48", default-features = false }

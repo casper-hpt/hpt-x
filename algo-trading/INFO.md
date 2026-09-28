@@ -17,12 +17,16 @@ download it by hand from
 [Google Drive](https://drive.google.com/file/d/1kAzenUMGXyuP7rnKpqisIflU3nscz9O6/view?usp=sharing)
 and put it there.
 
+Optional: `make rust` builds the Rust engines for much faster backtests and videos,
+see [rust/README.md](rust/README.md).
+
 ## Layout
 
 | path | contents |
 |---|---|
 | `notebooks/` | the demos |
 | `src/algo_trading/backtest/` | data loading, simulator, null tests, plots |
+| `rust/` | optional Rust engines for the simulator and video renderer |
 | `scripts/` | data download |
 | `requirements/` | dependencies (read by `pyproject.toml`) |
 

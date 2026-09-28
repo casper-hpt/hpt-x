@@ -46,6 +46,9 @@ class PortfolioConfig:
         min_history: Bars a token needs before it becomes investable.
         min_trade_frac: Orders smaller than this share of equity are skipped.
         normalize: If True, re-spread weights to full investment (no cash).
+        rebalance: If False, a held position is never resized: it is bought
+            once when its target turns on and sold in full when it turns off
+            (buy-and-hold per slot). ``band`` then only matters for entries.
     """
     scheme:         str   = "invvol"
     band:           float = 0.25
@@ -55,6 +58,7 @@ class PortfolioConfig:
     min_history:    int   = 14 * H
     min_trade_frac: float = 0.002
     normalize:      bool  = False
+    rebalance:      bool  = True
 
     @property
     def warmup(self) -> int:
