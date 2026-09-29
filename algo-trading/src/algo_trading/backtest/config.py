@@ -8,10 +8,32 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
+import yaml
+
 # ── Data ─────────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[3]   # src/algo_trading/backtest -> root
 DATA_DIR = PROJECT_ROOT / ".data"
-DATA_PATH = DATA_DIR / "historical_data.csv"
+CONFIG_PATH = PROJECT_ROOT / "config" / "config.yaml"
+DATA_FORMATS = ("long", "ohlcv")
+
+
+def _load_dataset(path: Path = CONFIG_PATH) -> tuple[str, dict]:
+    """Return the active dataset's name and settings from ``config/config.yaml``."""
+    cfg = yaml.safe_load(path.read_text())
+    name, datasets = cfg["dataset"], cfg["datasets"]
+    if name not in datasets:
+        raise ValueError(f"{path.name}: dataset {name!r} is not one of {sorted(datasets)}")
+    ds = datasets[name]
+    if ds.get("format", "long") not in DATA_FORMATS:
+        raise ValueError(f"{path.name}: dataset {name!r} has format {ds['format']!r}; "
+                         f"expected one of {DATA_FORMATS}")
+    return name, ds
+
+
+DATASET, _DS = _load_dataset()
+DATA_PATH = PROJECT_ROOT / _DS["path"]
+DATA_FORMAT = _DS.get("format", "long")
+HOURLY_START = _DS.get("hourly_start")   # default first bar for hourly_panel(); None = all
 
 # ── Cost ─────────────────────────────────────────────────────────────────────
 FEE_BPS = 20.0                  # 0.2% of notional, charged per fill (buy AND sell)
@@ -24,7 +46,6 @@ H = 24                          # hourly bars per day
 BARS_PER_YEAR_HOURLY = 24 * 365
 BARS_PER_YEAR_DAILY = 365
 
-HOURLY_START = "2026-05-25"
 MAX_FFILL_HOURS = 6             # cap the carry so an outage can't fake a flat series
 MAX_FFILL_DAYS = 3
 

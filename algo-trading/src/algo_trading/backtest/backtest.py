@@ -100,7 +100,8 @@ def _normalize_rows(raw: pd.DataFrame) -> pd.DataFrame:
 
 
 def slot_weights(signal: pd.DataFrame, n: int, priority: pd.DataFrame | None = None,
-                 seed: int | None = 0, exit: pd.DataFrame | None = None) -> pd.DataFrame:
+                 seed: int | None = 0, exit: pd.DataFrame | None = None,
+                 min_hold: int = 0) -> pd.DataFrame:
     """Hold up to ``n`` names at ``1/n`` each, first come, first served.
 
     A name enters when its signal is on AND a slot is free, then stays until its
@@ -122,6 +123,10 @@ def slot_weights(signal: pd.DataFrame, n: int, priority: pd.DataFrame | None = N
         exit: Optional boolean panel; True where a held name must be sold. Use it
             for entry/exit rules that differ (e.g. momentum thresholds with a
             gap). Defaults to ``~signal``.
+        min_hold: Bars an exit is ignored for after each buy, so a name bought on
+            bar ``t`` can first be sold on bar ``t + min_hold``. Filters whipsaw:
+            signals that flip back and forth around a crossover. 0 and 1 both
+            mean no filter, since the earliest exit is already the next bar.
 
     Returns:
         Target weights: ``1/n`` for each held name, 0 elsewhere.
@@ -133,9 +138,11 @@ def slot_weights(signal: pd.DataFrame, n: int, priority: pd.DataFrame | None = N
             else np.nan_to_num(priority.reindex_like(signal).to_numpy(float), nan=-np.inf))
     rng = np.random.default_rng(seed)
     held = np.zeros(on.shape[1], dtype=bool)
+    age = np.zeros(on.shape[1], dtype=int)             # bars since each name was bought
     out = np.zeros(on.shape)
     for t in range(len(on)):
-        held &= ~off[t]                                 # exits on each name's own rule
+        age += held
+        held &= ~(off[t] & (age >= min_hold))           # exits on each name's own rule
         free = n - int(held.sum())
         if free > 0:
             cand = np.flatnonzero(on[t] & ~held)
@@ -143,6 +150,7 @@ def slot_weights(signal: pd.DataFrame, n: int, priority: pd.DataFrame | None = N
                 cand = (rng.choice(cand, free, replace=False) if rank is None
                         else cand[np.argsort(-rank[t, cand], kind="stable")[:free]])
             held[cand] = True
+            age[cand] = 0
         out[t] = held / n
     return pd.DataFrame(out, index=signal.index, columns=signal.columns)
 

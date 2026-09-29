@@ -1,14 +1,23 @@
-"""Download ``historical_data.csv`` from Google Drive into ``.data/``.
+"""Download a price dataset from Google Drive into ``.data/``.
 
-The ``backtest`` package reads this file for every panel it builds. Run once
+The ``backtest`` package reads the dataset chosen in ``config/config.yaml``. Run
 from the ``algo-trading`` directory::
 
-    python scripts/download_data.py
-    python scripts/download_data.py --force   # re-download and overwrite
+    python scripts/download_data.py                        # historical_data.csv
+    python scripts/download_data.py --dataset ohlcv_15m    # ohlcv_15m.csv
+    python scripts/download_data.py --dataset all          # both
+    python scripts/download_data.py --force                # re-download and overwrite
 
-The file is long-format, one row per ``(interval, ts, token_id)``, with columns
-``interval, ts, token_id, open, high, low, close, volume, market_cap``. See
-``src/algo_trading/backtest/data.py`` for what each column means.
+The dataset names match the entries under ``datasets`` in ``config/config.yaml``:
+
+* ``historical``: ``historical_data.csv`` (~8 MB), long format, one row per
+  ``(interval, ts, token_id)`` with columns
+  ``interval, ts, token_id, open, high, low, close, volume, market_cap``.
+* ``ohlcv_15m``: ``ohlcv_15m.csv`` (~290 MB), 15-minute bars, one row per
+  ``(dt, symbol)`` with columns
+  ``<row index>, dt, timestamp, symbol, open, high, low, close, volume, trades``.
+
+See ``src/algo_trading/backtest/data.py`` for what each column means.
 
 Standard library only, so it runs before ``pip install -e .``. Colour is turned
 off when output is not a terminal or ``NO_COLOR`` is set.
@@ -21,15 +30,36 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
-FILE_ID = "1kAzenUMGXyuP7rnKpqisIflU3nscz9O6"
-SHARE_URL = f"https://drive.google.com/file/d/{FILE_ID}/view?usp=sharing"
-DOWNLOAD_URL = (f"https://drive.usercontent.google.com/download"
-                f"?id={FILE_ID}&export=download&confirm=t")
-OUT_PATH = Path(__file__).resolve().parents[1] / ".data" / "historical_data.csv"
-HEADER = "interval,ts,token_id,open,high,low,close,volume,market_cap"
+DATA_DIR = Path(__file__).resolve().parents[1] / ".data"
 CHUNK = 64 * 1024
+
+
+@dataclass(frozen=True)
+class Dataset:
+    """One downloadable file: its Drive id, local name, and expected CSV header."""
+    file_id: str
+    filename: str
+    header: str
+
+    @property
+    def share_url(self) -> str:
+        return f"https://drive.google.com/file/d/{self.file_id}/view?usp=sharing"
+
+    @property
+    def download_url(self) -> str:
+        return (f"https://drive.usercontent.google.com/download"
+                f"?id={self.file_id}&export=download&confirm=t")
+
+
+DATASETS = {
+    "historical": Dataset("1kAzenUMGXyuP7rnKpqisIflU3nscz9O6", "historical_data.csv",
+                          "interval,ts,token_id,open,high,low,close,volume,market_cap"),
+    "ohlcv_15m": Dataset("1Axd2JvTwBAZ2rUX-vLHRWLmhoeQ7HUX0", "ohlcv_15m.csv",
+                         ",dt,timestamp,symbol,open,high,low,close,volume,trades"),
+}
 
 
 # ── Terminal styling ─────────────────────────────────────────────────────────
@@ -142,12 +172,12 @@ class ProgressBar:
 
 # ── Download ─────────────────────────────────────────────────────────────────
 
-def download(out: Path, url: str = DOWNLOAD_URL, timeout: int = 120) -> Path:
+def download(ds: Dataset, out: Path, timeout: int = 120) -> Path:
     """Stream the CSV to ``out`` with a progress bar, writing to a temp file first.
 
     Args:
+        ds: The dataset to fetch.
         out: Destination path.
-        url: Direct-download URL.
         timeout: Socket timeout in seconds.
 
     Returns:
@@ -160,7 +190,7 @@ def download(out: Path, url: str = DOWNLOAD_URL, timeout: int = 120) -> Path:
     """
     out.parent.mkdir(parents=True, exist_ok=True)  # create .data/ on a fresh clone
     tmp = out.with_suffix(out.suffix + ".part")
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    req = urllib.request.Request(ds.download_url, headers={"User-Agent": "Mozilla/5.0"})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp, tmp.open("wb") as f:
             length = resp.headers.get("Content-Length")
@@ -173,10 +203,10 @@ def download(out: Path, url: str = DOWNLOAD_URL, timeout: int = 120) -> Path:
                 bar.close()
         with tmp.open(encoding="utf-8", errors="replace") as f:
             first = f.readline().strip()
-        if first != HEADER:
+        if first != ds.header:
             raise RuntimeError(
                 f"download did not return the expected CSV (got {first[:80]!r}).\n"
-                f"Download it manually from {SHARE_URL} and save it as {out}")
+                f"Download it manually from {ds.share_url} and save it as {out}")
         tmp.replace(out)
     finally:
         tmp.unlink(missing_ok=True)
@@ -191,34 +221,48 @@ def _rel(path: Path) -> str:
         return str(path)
 
 
-def main() -> int:
-    """Command-line entry point."""
-    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--out", type=Path, default=OUT_PATH)
-    ap.add_argument("--force", action="store_true", help="overwrite an existing file")
-    args = ap.parse_args()
-
-    if args.out.exists() and not args.force:
-        print(f"{S.yellow('•')} {S.bold(_rel(args.out))} already exists "
-              f"{S.dim('(' + _mb(args.out.stat().st_size) + ')')} — pass "
+def fetch(ds: Dataset, out: Path, force: bool) -> int:
+    """Download one dataset unless it is already there; return an exit code."""
+    if out.exists() and not force:
+        print(f"{S.yellow('•')} {S.bold(_rel(out))} already exists "
+              f"{S.dim('(' + _mb(out.stat().st_size) + ')')} — pass "
               f"{S.bold('--force')} to re-download")
         return 0
 
-    print(f"{S.blue('↓')} {S.bold('historical_data.csv')}  {S.dim('from Google Drive')}")
+    print(f"{S.blue('↓')} {S.bold(ds.filename)}  {S.dim('from Google Drive')}")
     start = time.monotonic()
     try:
-        path = download(args.out)
+        path = download(ds, out)
     except (RuntimeError, urllib.error.URLError, OSError) as exc:
         reason = getattr(exc, "reason", exc)
         print(f"{S.red('✗')} {S.bold('Download failed:')} {reason}", file=sys.stderr)
         if not isinstance(exc, RuntimeError):
-            print(S.dim(f"  Try again, or download manually from {SHARE_URL}"), file=sys.stderr)
+            print(S.dim(f"  Try again, or download manually from {ds.share_url}"),
+                  file=sys.stderr)
         return 1
 
     took = time.monotonic() - start
     print(f"{S.green('✓')} Saved {S.bold(_mb(path.stat().st_size))} to "
           f"{S.bold(_rel(path))} {S.dim(f'in {took:.1f}s')}")
     return 0
+
+
+def main() -> int:
+    """Command-line entry point."""
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--dataset", choices=[*DATASETS, "all"], default="historical",
+                    help="which file to fetch; names match config/config.yaml")
+    ap.add_argument("--out", type=Path,
+                    help="destination file (default: .data/<filename>); single dataset only")
+    ap.add_argument("--force", action="store_true", help="overwrite an existing file")
+    args = ap.parse_args()
+
+    names = list(DATASETS) if args.dataset == "all" else [args.dataset]
+    if args.out is not None and len(names) > 1:
+        ap.error("--out needs a single --dataset")
+    codes = [fetch(DATASETS[n], args.out or DATA_DIR / DATASETS[n].filename, args.force)
+             for n in names]
+    return max(codes)
 
 
 if __name__ == "__main__":

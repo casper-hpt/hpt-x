@@ -1,8 +1,16 @@
-"""Loading data: the historical CSV, the token universe, and gap-free price panels.
+"""Loading data: the price CSV, the token universe, and gap-free price panels.
 
-Everything is read from ``.data/historical_data.csv``; fetch it with
-``python scripts/download_data.py``. The file is long-format, one row per
-``(interval, ts, token_id)``:
+The CSV is the active dataset in ``config/config.yaml``; change ``dataset:`` there to
+switch files. Two file formats are understood, and both are turned into the same
+long table (the ``long`` columns below), so nothing downstream depends on the source.
+
+``ohlcv``: 15-minute bars, one row per ``(dt, symbol)`` with ``open``, ``high``,
+``low``, ``close``, ``volume`` (in the base asset). They are resampled on load into
+1h and 1d bars; hourly ``volume`` becomes trailing-24h volume and ``market_cap`` is
+empty, to match the ``long`` format. Symbols are lowercased into token ids.
+
+``long``: ``.data/historical_data.csv``, fetched with
+``python scripts/download_data.py``. One row per ``(interval, ts, token_id)``:
 
     ========== ==============================================================
     column     meaning
@@ -33,6 +41,7 @@ import pandas as pd
 from .config import (
     BARS_PER_YEAR_DAILY,
     BARS_PER_YEAR_HOURLY,
+    DATA_FORMAT,
     DATA_PATH,
     EXCLUDE,
     HOURLY_START,
@@ -48,31 +57,65 @@ COLUMNS = ["interval", "ts", "token_id", "open", "high", "low", "close", "volume
            "market_cap"]
 
 
+OHLCV_COLUMNS = ["dt", "symbol", "open", "high", "low", "close", "volume"]
+
+
+def _require(file: Path, columns: list[str], have) -> None:
+    missing = set(columns) - set(have)
+    if missing:
+        raise ValueError(f"{file.name} is missing columns: {sorted(missing)}; "
+                         f"check its `format` in config/config.yaml")
+
+
+def _read_long(file: Path) -> pd.DataFrame:
+    df = pd.read_csv(file, dtype={"interval": "category", "token_id": "string"})
+    _require(file, COLUMNS, df.columns)
+    df["ts"] = pd.to_datetime(df["ts"], format="ISO8601", utc=True)
+    return df[COLUMNS]
+
+
+def _read_ohlcv(file: Path) -> pd.DataFrame:
+    """Read 15-minute OHLCV bars and resample them to 1h and 1d long-format bars."""
+    _require(file, OHLCV_COLUMNS, pd.read_csv(file, nrows=0).columns)
+    df = pd.read_csv(file, usecols=OHLCV_COLUMNS, dtype={"symbol": "string"})
+    df["ts"] = pd.to_datetime(df.pop("dt"), format="ISO8601", utc=True)
+    df["token_id"] = df.pop("symbol").str.lower()
+    agg = {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
+    parts = []
+    for interval, freq in (("1h", "1h"), ("1d", "1D")):
+        bars = (df.groupby(["token_id", pd.Grouper(key="ts", freq=freq)]).agg(agg)
+                .dropna(subset=["close"]).reset_index())
+        if interval == "1h":   # the long format carries trailing-24h volume on hourly bars
+            bars["volume"] = (bars.set_index("ts").groupby("token_id")["volume"]
+                              .rolling("24h").sum().to_numpy())
+        parts.append(bars.assign(interval=interval))
+    out = pd.concat(parts, ignore_index=True).assign(market_cap=float("nan"))
+    out["interval"] = out["interval"].astype("category")
+    return out[COLUMNS]
+
+
 @lru_cache(maxsize=2)
-def _read_csv(path: str) -> pd.DataFrame:
+def _read_csv(path: str, fmt: str) -> pd.DataFrame:
     """Read and type the CSV once per path; callers get copies."""
     file = Path(path)
     if not file.exists():
         raise FileNotFoundError(
             f"{file} not found. Run `python scripts/download_data.py` "
             f"(or see INFO.md for the manual link).")
-    df = pd.read_csv(file, dtype={"interval": "category", "token_id": "string"})
-    missing = set(COLUMNS) - set(df.columns)
-    if missing:
-        raise ValueError(f"{file.name} is missing columns: {sorted(missing)}")
-    df["ts"] = pd.to_datetime(df["ts"], format="ISO8601", utc=True)
-    return df[COLUMNS].sort_values(["interval", "ts", "token_id"], ignore_index=True)
+    df = _read_ohlcv(file) if fmt == "ohlcv" else _read_long(file)
+    return df.sort_values(["interval", "ts", "token_id"], ignore_index=True)
 
 
 def load_bars(interval: str, tokens: list[str] | None = None, start: str | None = None,
-              path: Path = DATA_PATH) -> pd.DataFrame:
-    """Load long-format bars for one interval from the historical CSV.
+              path: Path = DATA_PATH, fmt: str = DATA_FORMAT) -> pd.DataFrame:
+    """Load long-format bars for one interval from the dataset CSV.
 
     Args:
         interval: ``"1d"`` or ``"1h"``.
-        tokens: Token ids to keep. None keeps every token in the file.
+        tokens: Token ids to keep (case-insensitive). None keeps every token.
         start: Optional inclusive lower bound on ``ts`` (any pandas-parsable date).
-        path: Location of the CSV.
+        path: Location of the CSV. Defaults to the active dataset in config.yaml.
+        fmt: File format, ``"long"`` or ``"ohlcv"``; see the module docstring.
 
     Returns:
         A DataFrame with the columns in ``COLUMNS`` (minus ``interval``), sorted by
@@ -82,29 +125,31 @@ def load_bars(interval: str, tokens: list[str] | None = None, start: str | None 
         FileNotFoundError: If the CSV has not been downloaded yet.
         ValueError: If the CSV lacks expected columns or ``interval`` is unknown.
     """
-    df = _read_csv(str(path))
+    df = _read_csv(str(path), fmt)
     if interval not in set(df["interval"]):
         raise ValueError(f"no {interval!r} bars in {Path(path).name}; "
                          f"found {sorted(df['interval'].unique())}")
     mask = df["interval"] == interval
     if tokens is not None:
-        mask &= df["token_id"].isin(tokens)
+        mask &= df["token_id"].isin([t.lower() for t in tokens])
     if start is not None:
         mask &= df["ts"] >= pd.Timestamp(start, tz="UTC")
     return df.loc[mask].drop(columns="interval").reset_index(drop=True)
 
 
-def load_universe(path: Path = DATA_PATH, exclude: frozenset[str] = EXCLUDE) -> list[str]:
+def load_universe(path: Path = DATA_PATH, exclude: frozenset[str] = EXCLUDE,
+                  fmt: str = DATA_FORMAT) -> list[str]:
     """List the tradeable tokens in the CSV.
 
     Args:
         path: Location of the CSV.
         exclude: Token ids to leave out (stablecoins, by default).
+        fmt: File format, ``"long"`` or ``"ohlcv"``.
 
     Returns:
         Sorted token ids present in the daily bars, minus ``exclude``.
     """
-    tokens = load_bars("1d", path=path)["token_id"].unique()
+    tokens = load_bars("1d", path=path, fmt=fmt)["token_id"].unique()
     return sorted(t for t in tokens if t not in exclude)
 
 
@@ -185,19 +230,20 @@ def to_wide(raw: pd.DataFrame, field: str, tokens: list[str], freq: str,
     return p.ffill(limit=ffill_limit)
 
 
-def hourly_panel(tokens: list[str] | None = None, start: str = HOURLY_START,
+def hourly_panel(tokens: list[str] | None = None, start: str | None = HOURLY_START,
                  raw: pd.DataFrame | None = None) -> Panel:
     """Build the hourly panel (close, trailing-24h volume, market cap).
 
     Args:
-        tokens: Token ids to include. None uses ``load_universe()``.
-        start: First bar to include.
+        tokens: Token ids to include (case-insensitive). None uses ``load_universe()``.
+        start: First bar to include. Defaults to the dataset's ``hourly_start`` in
+            config.yaml; None starts at the first bar.
         raw: Pre-loaded long bars; skips reading the CSV when given.
 
     Returns:
         An hourly ``Panel``.
     """
-    tokens = load_universe() if tokens is None else tokens
+    tokens = load_universe() if tokens is None else [t.lower() for t in tokens]
     raw = load_bars("1h", tokens, start) if raw is None else raw
 
     def wide(field: str) -> pd.DataFrame:
@@ -211,13 +257,13 @@ def daily_panel(tokens: list[str] | None = None, raw: pd.DataFrame | None = None
     """Build the daily panel (close and volume) from true 1d bars.
 
     Args:
-        tokens: Token ids to include. None uses ``load_universe()``.
+        tokens: Token ids to include (case-insensitive). None uses ``load_universe()``.
         raw: Pre-loaded long bars; skips reading the CSV when given.
 
     Returns:
         A daily ``Panel``.
     """
-    tokens = load_universe() if tokens is None else tokens
+    tokens = load_universe() if tokens is None else [t.lower() for t in tokens]
     raw = load_bars("1d", tokens) if raw is None else raw
     return Panel(close=to_wide(raw, "close", tokens, "1D", MAX_FFILL_DAYS),
                  bars_per_year=BARS_PER_YEAR_DAILY, freq="1d",

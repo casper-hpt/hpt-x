@@ -2,7 +2,7 @@
 
 Modules:
     config: Constants (fees, bar arithmetic, data path) and frozen config dataclasses.
-    data: Load ``.data/historical_data.csv`` into gap-free price ``Panel``s.
+    data: Load the dataset chosen in ``config/config.yaml`` into gap-free price ``Panel``s.
     backtest: The band-rebalanced portfolio simulator and performance stats.
     signals: Entry/exit rules (momentum thresholds) for ``backtest.slot_weights``.
     nulls: Randomisation tests that decide whether a result means anything.
