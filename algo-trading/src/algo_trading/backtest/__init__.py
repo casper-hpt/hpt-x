@@ -7,7 +7,7 @@ Modules:
     signals: Entry/exit rules (momentum thresholds) for ``backtest.slot_weights``.
     nulls: Randomisation tests that decide whether a result means anything.
     plots: Matplotlib theme and composable charts.
-    animate: Equity-race videos (mp4/gif) for sharing a result.
+    animate: Equity-race, allocation-still, risk-bar and bell-curve videos (mp4/gif).
 
 Typical notebook setup::
 

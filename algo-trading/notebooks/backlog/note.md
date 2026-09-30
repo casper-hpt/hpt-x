@@ -2,21 +2,21 @@
 
 ## Concepts
 
-### [ ] 1. Rebalancing Frequency (Daily vs. Monthly vs. Threshold Drift)
+### [X] 1. Rebalancing Frequency (Daily vs. Monthly vs. Threshold Drift)
 - **Visual Concept:** Run three identical portfolios side-by-side using a dynamic line chart or animated allocation stack. Show how passive drift changes your asset split over time.
 - **Educational Hook:** Rebalancing too frequently burns money on trading costs/taxes; rebalancing too rarely ruins risk management because winners take over the portfolio.
 - **Key Motion Graphic:** A live "Cost vs. Drift" meter that ticks up as rebalance thresholds are breached, showing the trade-off between keeping targeted weights and incurring friction costs.
 
 ---
 
-### [ ] 2. Risk Parity vs. Equal Weight vs. Market Cap Weight
+### [X] 2. Risk Parity vs. Equal Weight vs. Market Cap Weight
 - **Visual Concept:** Display 3 distinct asset classes (e.g., Tech Stocks, Crypto, Gold/Bonds). Show a bar chart representing asset weights versus a second set of bars showing Risk Contribution (volatility contribution).
 - **Educational Hook:** In an equal-weight portfolio (e.g., 33% each), Crypto might drive 85% of the overall portfolio's variance.
 - **Key Motion Graphic:** An animated balance scale or dual-bar chart showing equal capital allocated versus unequal risk, then transitioning to Risk Parity where risk contributions smooth out into flat, equal blocks.
 
 ---
 
-### [ ] 3. Mean-Variance Optimization: Lookback Window Sensitivity
+### [X] 3. Mean-Variance Optimization: Lookback Window Sensitivity
 - **Visual Concept:** Plot an Efficient Frontier curve that visually shifts and morphs in real time as your backtesting clock steps through history (e.g., comparing 30-day, 1-year, and 5-year lookback windows).
 - **Educational Hook:** Optimal weights are notoriously sensitive to past data. Small shifts in historical lookbacks lead to radical changes in asset weights ("error maximization").
 - **Key Motion Graphic:** An animated heatmap showing asset weight allocations flipping wildly frame-by-frame when using short lookback periods versus stabilizing over longer horizons.

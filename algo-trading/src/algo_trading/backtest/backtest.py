@@ -23,7 +23,8 @@ from .config import FEE_BPS, PortfolioConfig
 from .data import Panel, equal_weight_bh
 
 __all__ = ["PERF_FMT", "PERF_COLS", "fmt_table", "show", "risk_inputs", "slot_weights",
-           "base_weights", "simulate", "simulate_many", "perf", "stats_from_result",
+           "base_weights", "simulate", "simulate_many", "held_weights", "perf",
+           "stats_from_result",
            "run_weights", "run_flat", "exposure_matched", "benchmark_rows"]
 
 PERF_FMT = {"total_ret": "{:+.1%}", "sharpe": "{:.2f}", "vol": "{:.0%}", "max_dd": "{:.1%}",
@@ -268,6 +269,10 @@ def _simulate_py(close: pd.DataFrame, px: np.ndarray, W: np.ndarray, cfg: Portfo
             tradeable = ~np.isnan(p) & (p > 0)
             w_now = np.where(tradeable, qty * np.nan_to_num(p) / equity, 0.0)
             d = tgt - w_now
+            band = cfg.band                             # band_all: any breach opens it for all
+            if cfg.band_all and (tradeable & (np.abs(d) >= cfg.band * np.maximum(tgt, 0.01))
+                                 & (np.abs(d) >= cfg.min_trade_frac)).any():
+                band = 0.0
 
             for i in np.argsort(d, kind="stable"):     # sells first, so swaps can fund buys
                 if not tradeable[i]:
@@ -275,7 +280,7 @@ def _simulate_py(close: pd.DataFrame, px: np.ndarray, W: np.ndarray, cfg: Portfo
                 exiting = tgt[i] <= 1e-9 and qty[i] > 0
                 if not cfg.rebalance and qty[i] > 0 and not exiting:
                     continue                            # buy-and-hold: never resize
-                band_i = cfg.band * max(tgt[i], 0.01)
+                band_i = band * max(tgt[i], 0.01)
                 if not exiting and (abs(d[i]) < band_i or abs(d[i]) < cfg.min_trade_frac):
                     continue                            # inside the band — leave it alone
                 notional = d[i] * equity
@@ -323,8 +328,8 @@ def simulate(close: pd.DataFrame, w_tgt: pd.DataFrame, cfg: PortfolioConfig,
     Args:
         close: Wide close-price panel.
         w_tgt: Target weights, aligned (or alignable) to ``close``.
-        cfg: Portfolio config (uses ``band``, ``check_bars``, ``min_trade_frac``,
-            ``rebalance``).
+        cfg: Portfolio config (uses ``band``, ``band_all``, ``check_bars``,
+            ``min_trade_frac``, ``rebalance``).
         fee_bps: Cost per fill, in basis points of notional.
         initial: Starting cash.
         warmup: Bars to skip before the first trade.
@@ -345,7 +350,8 @@ def simulate(close: pd.DataFrame, w_tgt: pd.DataFrame, cfg: PortfolioConfig,
     if _engine(engine) == "python":
         return _simulate_py(close, px, W, cfg, fee_bps, initial, warmup)
     raw = _rs.simulate(px, W, float(fee_bps), float(initial), int(warmup), int(cfg.check_bars),
-                       float(cfg.band), float(cfg.min_trade_frac), bool(cfg.rebalance))
+                       float(cfg.band), float(cfg.min_trade_frac), bool(cfg.rebalance),
+                       bool(cfg.band_all))
     return _from_rust(close, raw, cfg, fee_bps, initial, warmup)
 
 
@@ -379,9 +385,32 @@ def simulate_many(close: pd.DataFrame, weights: Sequence[pd.DataFrame], cfg: Por
     Ws = [_arrays(close, w)[1] for w in weights]
     raws = _rs.simulate_many(px, Ws, fees, float(initial), int(warmup), int(cfg.check_bars),
                              float(cfg.band), float(cfg.min_trade_frac),
-                             bool(cfg.rebalance))
+                             bool(cfg.rebalance), bool(cfg.band_all))
     return [_from_rust(close, raw, cfg, f, initial, warmup)
             for raw, f in zip(raws, fees, strict=True)]
+
+
+def held_weights(res: dict, close: pd.DataFrame) -> pd.DataFrame:
+    """The weights a ``simulate`` run actually held at each close, after drift.
+
+    Rebuilt from the fill log: a buy adds ``(notional - fee) / price`` units and a
+    sell removes ``notional / price``, both at the fill bar's close, exactly as
+    the simulator books them. Whatever the columns don't sum to is cash.
+
+    Args:
+        res: Output of ``simulate`` on ``close``.
+        close: The price panel the run was simulated on.
+
+    Returns:
+        Weights shaped like ``close``: each position's value over equity.
+    """
+    f = res["fills"]
+    px = close.to_numpy(float)[close.index.get_indexer(f.ts), close.columns.get_indexer(f.token)]
+    units = np.where(f.side == "BUY", f.notional - f.fee, -f.notional) / px
+    qty = (pd.DataFrame({"ts": f.ts, "token": f.token, "units": units})
+           .pivot_table(index="ts", columns="token", values="units", aggfunc="sum")
+           .reindex(index=close.index, columns=close.columns).fillna(0.0).cumsum())
+    return (qty * close.ffill()).div(res["equity"], axis=0).fillna(0.0)
 
 
 # ── Statistics ───────────────────────────────────────────────────────────────

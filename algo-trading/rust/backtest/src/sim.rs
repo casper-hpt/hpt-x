@@ -21,6 +21,8 @@ pub struct Params {
     pub min_trade_frac: f64,
     /// If false, held positions are never resized: bought once, sold in full.
     pub rebalance: bool,
+    /// If true, one position outside its band trades every position back to target.
+    pub band_all: bool,
 }
 
 /// One executed order.
@@ -124,6 +126,14 @@ pub fn simulate(px: Grid, w: Grid, p: &Params) -> SimOutput {
             // np.argsort(d, kind="stable"): most negative (sells) first, ties by column.
             order.iter_mut().enumerate().for_each(|(k, o)| *o = k);
             order.sort_by(|&a, &b| d[a].total_cmp(&d[b]));
+            // band_all: any breach opens the band for the whole book on this check.
+            let breach = p.band_all
+                && (0..n).any(|i| {
+                    tradeable[i]
+                        && d[i].abs() >= p.band * tgt[i].max(0.01)
+                        && d[i].abs() >= p.min_trade_frac
+                });
+            let band = if breach { 0.0 } else { p.band };
 
             for &i in &order {
                 if !tradeable[i] {
@@ -133,7 +143,7 @@ pub fn simulate(px: Grid, w: Grid, p: &Params) -> SimOutput {
                 if !p.rebalance && qty[i] > 0.0 && !exiting {
                     continue; // buy-and-hold: never resize
                 }
-                let band_i = p.band * tgt[i].max(0.01);
+                let band_i = band * tgt[i].max(0.01);
                 if !exiting && (d[i].abs() < band_i || d[i].abs() < p.min_trade_frac) {
                     continue; // inside the band: leave it alone
                 }
@@ -188,7 +198,7 @@ mod tests {
 
     fn params() -> Params {
         Params { fee: 0.001, initial: 1000.0, warmup: 1, check_bars: 1, band: 0.25,
-                 min_trade_frac: 0.002, rebalance: true }
+                 min_trade_frac: 0.002, rebalance: true, band_all: false }
     }
 
     #[test]
@@ -223,6 +233,20 @@ mod tests {
         assert_eq!(out.fills.len(), 2); // the two entries, nothing after
         let out = simulate(grid(&px, 2), grid(&w, 2), &params());
         assert!(out.fills.len() > 2);
+    }
+
+    #[test]
+    fn band_all_trades_the_whole_book_on_a_breach() {
+        // Token 0 rallies to ~56% vs a 40% target, outside its band; tokens 1 and 2
+        // sink to ~22% vs 30%, inside theirs. Per name only token 0 trades.
+        let px = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.9, 1.0, 1.0];
+        let w = [0.4, 0.3, 0.3, 0.4, 0.3, 0.3, 0.4, 0.3, 0.3];
+        let per_name = simulate(grid(&px, 3), grid(&w, 3), &Params { band: 0.3, ..params() });
+        let whole = simulate(grid(&px, 3), grid(&w, 3),
+                             &Params { band: 0.3, band_all: true, ..params() });
+        let on_bar2 = |o: &SimOutput| o.fills.iter().filter(|f| f.t == 2).count();
+        assert_eq!(on_bar2(&per_name), 1);
+        assert_eq!(on_bar2(&whole), 3);
     }
 
     #[test]

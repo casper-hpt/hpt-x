@@ -32,9 +32,11 @@ impl Owned {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn params(fee_bps: f64, initial: f64, warmup: usize, check_bars: usize, band: f64,
-          min_trade_frac: f64, rebalance: bool) -> Params {
-    Params { fee: fee_bps / 1e4, initial, warmup, check_bars, band, min_trade_frac, rebalance }
+          min_trade_frac: f64, rebalance: bool, band_all: bool) -> Params {
+    Params { fee: fee_bps / 1e4, initial, warmup, check_bars, band, min_trade_frac, rebalance,
+             band_all }
 }
 
 fn check_shape(close: &Owned, w: &Owned) -> PyResult<()> {
@@ -81,21 +83,23 @@ fn to_dict(py: Python<'_>, out: SimOutput) -> PyResult<Bound<'_, PyDict>> {
 ///     band: No-trade band, relative to the target weight.
 ///     min_trade_frac: Orders smaller than this share of equity are skipped.
 ///     rebalance: If False, held positions are never resized (bought once, sold in full).
+///     band_all: If True, one position outside its band trades every position to target.
 ///
 /// Returns:
 ///     A dict of NumPy arrays: ``equity``, ``fill_*`` and ``log_*`` columns, plus
 ///     ``fees`` and ``traded`` totals.
 #[pyfunction]
 #[pyo3(signature = (close, weights, fee_bps, initial, warmup, check_bars, band, min_trade_frac,
-                    rebalance=true))]
+                    rebalance=true, band_all=false))]
 #[allow(clippy::too_many_arguments)]
 fn simulate<'py>(py: Python<'py>, close: PyReadonlyArray2<'py, f64>,
                  weights: PyReadonlyArray2<'py, f64>, fee_bps: f64, initial: f64,
                  warmup: usize, check_bars: usize, band: f64, min_trade_frac: f64,
-                 rebalance: bool) -> PyResult<Bound<'py, PyDict>> {
+                 rebalance: bool, band_all: bool) -> PyResult<Bound<'py, PyDict>> {
     let (px, w) = (Owned::from(&close), Owned::from(&weights));
     check_shape(&px, &w)?;
-    let p = params(fee_bps, initial, warmup, check_bars, band, min_trade_frac, rebalance);
+    let p = params(fee_bps, initial, warmup, check_bars, band, min_trade_frac, rebalance,
+                   band_all);
     let out = py.detach(|| sim::simulate(px.grid(), w.grid(), &p));
     to_dict(py, out)
 }
@@ -106,12 +110,12 @@ fn simulate<'py>(py: Python<'py>, close: PyReadonlyArray2<'py, f64>,
 /// ``fee_bps`` is one value per panel. Returns one dict per panel, in order.
 #[pyfunction]
 #[pyo3(signature = (close, weights, fee_bps, initial, warmup, check_bars, band, min_trade_frac,
-                    rebalance=true))]
+                    rebalance=true, band_all=false))]
 #[allow(clippy::too_many_arguments)]
 fn simulate_many<'py>(py: Python<'py>, close: PyReadonlyArray2<'py, f64>,
                       weights: Vec<PyReadonlyArray2<'py, f64>>, fee_bps: Vec<f64>,
                       initial: f64, warmup: usize, check_bars: usize, band: f64,
-                      min_trade_frac: f64, rebalance: bool)
+                      min_trade_frac: f64, rebalance: bool, band_all: bool)
                       -> PyResult<Vec<Bound<'py, PyDict>>> {
     if fee_bps.len() != weights.len() {
         return Err(PyValueError::new_err("fee_bps needs one value per weights panel"));
@@ -125,7 +129,8 @@ fn simulate_many<'py>(py: Python<'py>, close: PyReadonlyArray2<'py, f64>,
         ws.par_iter()
             .zip(fee_bps.par_iter())
             .map(|(w, &fee)| {
-                let p = params(fee, initial, warmup, check_bars, band, min_trade_frac, rebalance);
+                let p = params(fee, initial, warmup, check_bars, band, min_trade_frac, rebalance,
+                               band_all);
                 sim::simulate(px.grid(), w.grid(), &p)
             })
             .collect()

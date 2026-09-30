@@ -27,6 +27,19 @@ pub fn fmt_g(v: f64) -> String {
     if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s }
 }
 
+/// `f"${v:,.0f}"`: whole dollars with thousands separators.
+pub fn fmt_dollars(v: f64) -> String {
+    let digits = format!("{:.0}", v.abs());
+    let mut out = String::new();
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    format!("{}${out}", if v < -0.5 { "-" } else { "" })
+}
+
 /// Log-scale ticks inside `[lo, hi]`: `(majors, minors)`, each labelled at 1/2/5 x 10^k.
 pub fn log_ticks(lo: f64, hi: f64) -> (Vec<Tick>, Vec<Tick>) {
     let (mut majors, mut minors) = (vec![], vec![]);
@@ -189,6 +202,14 @@ mod tests {
         assert_eq!(fmt_g(0.5), "0.5");
         assert_eq!(fmt_g(0.2), "0.2");
         assert_eq!(fmt_g(1e6), "1e+06");
+    }
+
+    #[test]
+    fn formats_dollars() {
+        assert_eq!(fmt_dollars(0.0), "$0");
+        assert_eq!(fmt_dollars(50.0), "$50");
+        assert_eq!(fmt_dollars(1234.4), "$1,234");
+        assert_eq!(fmt_dollars(1_000_000.0), "$1,000,000");
     }
 
     #[test]

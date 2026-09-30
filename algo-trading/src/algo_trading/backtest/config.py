@@ -70,6 +70,10 @@ class PortfolioConfig:
         rebalance: If False, a held position is never resized: it is bought
             once when its target turns on and sold in full when it turns off
             (buy-and-hold per slot). ``band`` then only matters for entries.
+        band_all: If True, one position outside its band trades every position
+            back to target on that check (threshold rebalancing of the whole
+            book). If False, only the positions outside their band trade, and
+            the rest stay where they drifted.
     """
     scheme:         str   = "invvol"
     band:           float = 0.25
@@ -80,6 +84,7 @@ class PortfolioConfig:
     min_trade_frac: float = 0.002
     normalize:      bool  = False
     rebalance:      bool  = True
+    band_all:       bool  = False
 
     @property
     def warmup(self) -> int:
